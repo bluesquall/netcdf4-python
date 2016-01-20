@@ -40,6 +40,7 @@ else:
     open_kwargs = {'encoding':'utf-8'}
 
 def check_hdf5version(hdf5_includedir):
+    sys.stdout.write('checking HDF5 version in %s ...\n' % hdf5_includedir)
     try:
         f = open(os.path.join(hdf5_includedir,'H5pubconf-64.h'),**open_kwargs)
     except IOError:
@@ -54,6 +55,7 @@ def check_hdf5version(hdf5_includedir):
     for line in f:
         if line.startswith('#define H5_VERSION'):
             hdf5_version = line.split()[2]
+    print(hdf5_version)
     return hdf5_version
 
 def check_ifnetcdf4(netcdf4_includedir):
@@ -250,7 +252,7 @@ if not retcode:
     inc_dirs = [str(i[2:].decode()) for i in dep.split() if i[0:2].decode() == '-I']
 # if nc-config didn't work (it won't on windows), fall back on brute force method
 else:
-    dirstosearch =  [os.path.expanduser('~'),'/usr/local','/sw','/opt','/opt/local', '/usr']
+    dirstosearch =  [os.path.expanduser('~'),'/usr/local','/sw','/opt','/opt/local', '/usr', '/usr/include/hdf5/serial']
 
     if HDF5_incdir is None and HDF5_dir is None:
         sys.stdout.write("""
@@ -259,13 +261,19 @@ HDF5_DIR environment variable not set, checking some standard locations ..\n""")
             sys.stdout.write('checking %s ...\n' % direc)
             hdf5_version = check_hdf5version(os.path.join(direc, 'include'))
             if hdf5_version is None or hdf5_version[1:6] < '1.8.0':
-                continue
+                hdf5_version = check_hdf5version(direc)
+                if hdf5_version is None or hdf5_version[1:6] < '1.8.0':
+                    continue
+                else:
+                    HDF5_incdir = direc
+                    sys.stdout.write('HDF5 header found in %s\n' % HDF5_incdir)
+                    break
             else:
                 HDF5_dir = direc
                 HDF5_incdir = os.path.join(direc, 'include')
                 sys.stdout.write('HDF5 found in %s\n' % HDF5_dir)
                 break
-        if HDF5_dir is None:
+        if HDF5_dir is None and HDF5_incdir is None:
             raise ValueError('did not find HDF5 headers')
     else:
         if HDF5_incdir is None:
@@ -300,6 +308,8 @@ NETCDF4_DIR environment variable not set, checking standard locations.. \n""")
 
     if HDF5_libdir is None and HDF5_dir is not None:
         HDF5_libdir = os.path.join(HDF5_dir, 'lib')
+    
+       
 
     if netCDF4_libdir is None and netCDF4_dir is not None:
         netCDF4_libdir = os.path.join(netCDF4_dir, 'lib')
@@ -308,10 +318,43 @@ NETCDF4_DIR environment variable not set, checking standard locations.. \n""")
         libs = ['netcdf','hdf5_hl','hdf5','zlib']
     else:
         libs = ['netcdf','hdf5_hl','hdf5','z']
-    if netCDF4_libdir is not None: lib_dirs=[netCDF4_libdir]
+    lib_dirs, inc_dirs = [], []
+    if netCDF4_libdir is not None: lib_dirs.append(netCDF4_libdir)
     if HDF5_libdir is not None: lib_dirs.append(HDF5_libdir)
-    if netCDF4_incdir is not None: inc_dirs=[netCDF4_incdir]
+    if netCDF4_incdir is not None: inc_dirs.append(netCDF4_incdir)
     if HDF5_incdir is not None: inc_dirs.append(HDF5_incdir)
+
+    # check for library files
+    if sys.platform=='linux':
+        h5_testlib = 'libhdf5.so'
+        h5_libfound = any([os.path.exists(os.path.join(pth, h5_testlib))
+                for pth in lib_dirs])
+        if not h5_libfound:
+            pth = '/usr/lib/x86_64-linux-gnu/hdf5/serial'
+            h5_libfound = os.path.exists(os.path.join(pth, h5_testlib))
+            if h5_libfound:
+                lib_dirs.append(pth)
+        """
+        if not h5_libfound:
+            print('checking subdirectories of lib_dirs for HDF5')
+            for pth in lib_dirs:
+                print('checking recursively under %s' % pth)
+                for root, folders, files in os.walk(pth):
+                    if h5_testlib in files:
+                        lib_dirs.append(root)
+                        h5_libfound = True
+        if not h5_libfound:
+            print('checking other locations for HDF5')
+            for pth in ('/usr/lib', '/usr/local/lib', ):
+                print('checking recursively under %s' % pth)
+                for root, folders, files in os.walk(pth):
+                    if h5_testlib in files:
+                        lib_dirs.append(root)
+                        h5_libfound = True
+        """
+        if not h5_libfound:
+            raise ValueError('did not find HDF5 library')
+ 
 
     # add szip to link if desired.
     if szip_libdir is None and szip_dir is not None:
